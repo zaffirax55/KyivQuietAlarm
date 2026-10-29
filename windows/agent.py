@@ -68,9 +68,10 @@ def local_ip() -> str:
 
 def verify(method: str, path: str, body: bytes, headers: dict[str, str], now: float | None = None) -> bool:
     now = time.time() if now is None else now
-    t = headers.get("X-PC-Time", "")
-    nonce = headers.get("X-PC-Nonce", "")
-    mac = headers.get("X-PC-Signature", "")
+    headers = {k.lower(): v for k, v in headers.items()}
+    t = headers.get("x-pc-time", "")
+    nonce = headers.get("x-pc-nonce", "")
+    mac = headers.get("x-pc-signature", "")
     if not (t.isdecimal() and len(t) in (10, 13) and 16 <= len(nonce) <= 64 and len(mac) == 64):
         return False
     timestamp = int(t) / (1000 if len(t) == 13 else 1)
