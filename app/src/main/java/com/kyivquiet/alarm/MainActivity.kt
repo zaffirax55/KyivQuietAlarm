@@ -279,7 +279,7 @@ class MainActivity : Activity() {
         help.addView(text("Это только обычный будильник. Он НЕ отключает сирены, официальные push-оповещения и предупреждения Android. Проверь разрешения будильника и батареи в HyperOS.",12f,white))
         root.addView(help)
 
-        setContentView(ScrollView(this).apply{fillViewport=true; addView(root)})
+        setContentView(ScrollView(this).apply{isFillViewport=true; addView(root)})
     }
     private fun checkAlert(){
         liveStatus="⏳  Проверяем…"
