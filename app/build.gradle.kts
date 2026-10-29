@@ -6,8 +6,8 @@ android {
         applicationId = "com.kyivquiet.alarm"
         minSdk = 26
         targetSdk = 35
-        versionCode = 7
-        versionName = "7.0"
+        versionCode = 8
+        versionName = "8.0"
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
