@@ -43,7 +43,7 @@ class MainActivity : Activity() {
         render()
         checkAlert()
     }
-    override fun onResume() { super.onResume(); if (statusView != null) render() }
+    override fun onResume() { super.onResume(); if (statusView != null) { render(); checkAlert() } }
     override fun onDestroy() {
         ringtonePreview?.stop()
         try { builtInPreview?.stop() } catch (_: Exception) {}
@@ -288,16 +288,52 @@ class MainActivity : Activity() {
         topSpacing(root,snoozeCard)
 
         val stateCard=verticalCard()
-        title(stateCard,"Тревога в Киеве","Статус проверяется по городскому API")
+        title(stateCard,"Тревога в Киеве","Официальный статус · Київ Цифровий")
         spacer(stateCard,15)
         statusView=text(liveStatus,15f,mint,true)
         stateCard.addView(statusView)
+        spacer(stateCard,12)
+        val lastState = p.getString("last_state", "unknown")
+        val isPending = p.getBoolean("pending", false)
+        val lastMessage = when {
+            isPending -> "⏳ Ожидаем подтверждённого отбоя — звонок отложен"
+            lastState == "active" -> "Последняя проверка: воздушная тревога"
+            lastState == "clear" -> "Последняя проверка: отбой"
+            else -> "Последняя проверка: нет достоверных данных"
+        }
+        stateCard.addView(text(lastMessage, 12f, if (isPending) mint else muted))
+        spacer(stateCard,18)
+        val strictRow=horiz()
+        val strictLabels=column()
+        strictLabels.addView(text("Ждать подтверждённого отбоя",14f,white,true))
+        spacer(strictLabels,6)
+        strictLabels.addView(text("При ошибке связи не звонить, а проверять снова",12f,muted))
+        strictRow.addView(strictLabels,LinearLayout.LayoutParams(0,-2,1f))
+        val strictSwitch=Switch(this).apply {
+            isChecked=AlarmConfig.waitForConfirmedClear(this@MainActivity)
+            setOnCheckedChangeListener { _,checked ->
+                p.edit().putBoolean("wait_confirmed_clear",checked).apply()
+                render()
+            }
+        }
+        strictRow.addView(strictSwitch)
+        stateCard.addView(strictRow)
+        spacer(stateCard,10)
+        stateCard.addView(text(
+            "Если интернет недоступен, в этом режиме будильник может вообще не прозвонить. " +
+            "Для обязательного пробуждения оставь дополнительный системный будильник.",
+            12f,Color.rgb(250,193,119)))
         spacer(stateCard,15)
         val check=button("↻  Проверить сейчас",Color.rgb(47,59,90),white)
         check.setOnClickListener{checkAlert()}
         stateCard.addView(check)
         spacer(stateCard,13)
-        stateCard.addView(text("Если в момент звонка есть тревога — сигнал откладывается до отбоя. Если сеть или API недоступны — будильник звонит по расписанию.",12f,muted))
+        stateCard.addView(text(
+            if (AlarmConfig.waitForConfirmedClear(this))
+                "При тревоге и недоступном API ждём. Звоним только когда город подтвердил отбой."
+            else
+                "При тревоге ждём отбоя. Если API недоступен — звоним по расписанию.",
+            12f,muted))
         topSpacing(root,stateCard)
 
         val help=verticalCard().apply{background=bgShape(Color.rgb(24,41,48),19)}
@@ -312,12 +348,13 @@ class MainActivity : Activity() {
         liveStatus="⏳  Проверяем…"
         statusView?.text=liveStatus
         executor.execute {
-            val result=KyivAlertApi.fetch()
+            val result=KyivAlertApi.fetchDetailed()
             runOnUiThread{
-                liveStatus=when(result){
+                if (isFinishing || isDestroyed) return@runOnUiThread
+                liveStatus=when(result.active){
                     true -> "🔴  Сейчас воздушная тревога"
                     false -> "🟢  Сейчас отбой / тревоги нет"
-                    null -> "⚪  Не удалось получить статус — проверь интернет"
+                    null -> "⚪  Статус неизвестен: " + result.detail
                 }
                 statusView?.text=liveStatus
             }
