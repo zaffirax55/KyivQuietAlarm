@@ -77,9 +77,9 @@ class AlarmService : Service() {
         startForeground(AlarmConfig.NOTIF_ID, notification("Проверяем статус тревоги в Киеве…"))
         val checkLock = getSystemService(PowerManager::class.java)
             .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "KyivQuietAlarm:Check")
-        checkLock.acquire(20000L)
+        checkLock.acquire(22_000L)
         executor.execute {
-            val state = KyivAlertApi.fetch()
+            val result = KyivAlertApi.fetchDetailed()
             if (checkLock.isHeld) checkLock.release()
             main.post {
                 if (dead) return@post
@@ -88,19 +88,34 @@ class AlarmService : Service() {
                     stopSelf()
                     return@post
                 }
-                p.edit().putString("last_state",
-                    if(state == true) "active" else if(state == false) "clear" else "unknown")
-                    .putLong("last_checked", System.currentTimeMillis()).apply()
-                if (state == true) {
+                val strict = AlarmConfig.waitForConfirmedClear(this)
+                val state = result.active
+                p.edit()
+                    .putString("last_state",
+                        if (state == true) "active" else if (state == false) "clear" else "unknown")
+                    .putString("last_detail", result.detail.take(140))
+                    .putLong("last_checked", System.currentTimeMillis())
+                    .apply()
+                if (state == true || (state == null && strict)) {
+                    // Do not assume an API error means all-clear.
                     p.edit().putBoolean("pending", true).apply()
-                    val scheduled = AlarmPlan.scheduleAt(this, System.currentTimeMillis()+60_000)
-                    if (scheduled) stopSelf()
-                    else ring("Не удалось запланировать повторную проверку")
+                    val next = System.currentTimeMillis() + 60_000L
+                    if (AlarmPlan.scheduleRetry(this, next)) {
+                        stopSelf()
+                    } else {
+                        // Last-resort in-process retry. Do not falsely ring.
+                        startForeground(AlarmConfig.NOTIF_ID,
+                            notification("Нет данных или тревога. Ждём подтверждённого отбоя…"))
+                        main.postDelayed({
+                            if (!dead && p.getBoolean("enabled", false))
+                                onStartCommand(Intent(this, AlarmService::class.java), 0, 0)
+                        }, 60_000L)
+                    }
                 } else {
                     p.edit().putBoolean("pending", false).apply()
                     AlarmPlan.scheduleNext(this)
-                    ring(if(state == false) "Отбой тревоги — пора просыпаться"
-                        else "Статус недоступен — обычный будильник")
+                    ring(if (state == false) "Подтверждён отбой — пора вставать!"
+                        else "Нет данных: обычный режим будильника")
                 }
             }
         }

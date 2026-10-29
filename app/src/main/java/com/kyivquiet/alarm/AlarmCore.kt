@@ -15,9 +15,10 @@ object AlarmConfig {
     const val ACTION_TRIGGER = "com.kyivquiet.alarm.TRIGGER"
     const val ACTION_STOP = "com.kyivquiet.alarm.STOP"
     const val ACTION_SNOOZE = "com.kyivquiet.alarm.SNOOZE"
-    const val CHANNEL_ID = "quiet_alarm_v7"
+    const val CHANNEL_ID = "quiet_alarm_v9"
     const val NOTIF_ID = 912
     fun prefs(context: Context) = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+    fun waitForConfirmedClear(c: Context) = prefs(c).getBoolean("wait_confirmed_clear", true)
 }
 
 object AlarmPlan {
@@ -67,6 +68,17 @@ object AlarmPlan {
         return false
     }
 
+    fun scheduleRetry(c: Context, at: Long): Boolean = try {
+        val am = c.getSystemService(AlarmManager::class.java)
+        if (hasPermission(c)) scheduleAt(c, at)
+        else {
+            // Inexact fallback if Android revoked exact-alarm permission.
+            am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, triggerIntent(c))
+            AlarmConfig.prefs(c).edit().putLong("next_at", at).apply()
+            true
+        }
+    } catch (_: Exception) { false }
+
     fun cancel(c: Context) {
         c.getSystemService(AlarmManager::class.java).cancel(triggerIntent(c))
         AlarmConfig.prefs(c).edit().remove("next_at").apply()
@@ -96,7 +108,7 @@ class AlarmReceiver : BroadcastReceiver() {
                     c.startForegroundService(Intent(c, AlarmService::class.java).setAction("CHECK"))
                 } catch (_: Exception) {
                     p.edit().putBoolean("pending", true).apply()
-                    AlarmPlan.scheduleAt(c, System.currentTimeMillis() + 60000L)
+                    AlarmPlan.scheduleRetry(c, System.currentTimeMillis() + 60000L)
                 }
             }
         }
@@ -107,7 +119,7 @@ class BootReceiver : BroadcastReceiver() {
     override fun onReceive(c: Context, intent: Intent?) {
         if (!AlarmConfig.prefs(c).getBoolean("enabled", false)) return
         if (AlarmConfig.prefs(c).getBoolean("pending", false))
-            AlarmPlan.scheduleAt(c, System.currentTimeMillis() + 60000L)
+            AlarmPlan.scheduleRetry(c, System.currentTimeMillis() + 60000L)
         else AlarmPlan.scheduleNext(c)
     }
 }
