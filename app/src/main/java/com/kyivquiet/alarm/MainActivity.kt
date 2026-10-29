@@ -160,6 +160,19 @@ class MainActivity : Activity() {
         spacer(hero,10)
         val clockHint=text("НАЖМИ, ЧТОБЫ ИЗМЕНИТЬ ЧАСЫ И МИНУТЫ",11f,muted,true).apply{gravity=Gravity.CENTER}
         hero.addView(clockHint)
+        spacer(hero,13)
+        val adjustRow=horiz()
+        listOf(-5,-1,1,5).forEachIndexed { index,change ->
+            val control=chip(if(change>0) "+${change} мин" else "${change} мин", false)
+            adjustRow.addView(control,LinearLayout.LayoutParams(0,-2,1f).apply {
+                if(index<3)rightMargin=d(6)
+            })
+            control.setOnClickListener {
+                val total=(h*60+m+change+1440)%1440
+                updateTime(total/60,total%60)
+            }
+        }
+        hero.addView(adjustRow)
         spacer(hero,18)
         val next=text(if(status) nextText() else "Выбери время и включи будильник",13f,white).apply { gravity=Gravity.CENTER }
         hero.addView(next)
