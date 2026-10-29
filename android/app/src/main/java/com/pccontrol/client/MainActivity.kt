@@ -37,6 +37,7 @@ class MainActivity : Activity() {
     private lateinit var macInput: EditText
     private lateinit var statusText: TextView
     private lateinit var deviceText: TextView
+    private lateinit var agentVersionText: TextView
     private lateinit var batteryText: TextView
     private lateinit var memoryText: TextView
     private lateinit var uptimeText: TextView
@@ -157,6 +158,8 @@ class MainActivity : Activity() {
         hero.addView(top);gap(hero,18)
         deviceText=txt("ASUS · Windows",26f,white,true)
         hero.addView(deviceText);gap(hero,6)
+        agentVersionText=txt("Windows-агент: не подключён · Android 1.3",11f,grey)
+        hero.addView(agentVersionText);gap(hero,8)
         hero.addView(txt("Безопасное управление по Wi-Fi",12f,grey));gap(hero,22)
         val stats=row()
         fun statistic(name:String):TextView {
@@ -303,6 +306,13 @@ class MainActivity : Activity() {
         connected=online
         statusText.text=if(online)"●  В СЕТИ" else "○  НЕТ СВЯЗИ"
         statusText.setTextColor(if(online)mint else coral)
+        if(!online){
+            // Data from the last successful request is NOT live while disconnected.
+            batteryText.text="—"
+            memoryText.text="—"
+            uptimeText.text="—"
+            agentVersionText.text="Windows-агент: нет связи · Android 1.3"
+        }
         if(message!=null)toast(message)
     }
     private fun connect(ip:String,key:String){
@@ -314,6 +324,13 @@ class MainActivity : Activity() {
                 runOnUiThread{
                     try{SecurePrefs.store(this,ip,key)}catch(_:Exception){toast("Не удалось сохранить ключ безопасно")}
                     showDevice(result);setStatus(true,"Подключено к ноутбуку")
+                    val serverVersion=result.optJSONObject("device")?.optString("version","")?:""
+                    if(serverVersion.isNotEmpty() && serverVersion!="1.3"){
+                        AlertDialog.Builder(this)
+                            .setTitle("Версии приложения отличаются")
+                            .setMessage("На ноутбуке PC Control Windows $serverVersion, на телефоне Android 1.3. Некоторые кнопки могут возвращать Unsupported command. Закрой старый EXE на ноутбуке и запусти Windows 1.3.")
+                            .setPositiveButton("Понятно",null).show()
+                    }
                 }
             }catch(e:Exception){runOnUiThread{setStatus(false,"Нет связи: ${e.message?.take(90)?:"ошибка"}")}}
         }
@@ -342,6 +359,8 @@ class MainActivity : Activity() {
             }
         }
         deviceText.text=x.optString("name","Windows")
+        val serverVersion=x.optString("version","?")
+        agentVersionText.text="Windows $serverVersion · Android 1.3"
         val b=x.optJSONObject("battery")
         val pct=b?.optInt("percent",-1)?:-1
         batteryText.text=if(pct>=0)"$pct%" else "—"
@@ -407,7 +426,17 @@ class MainActivity : Activity() {
                 try{
                     val response=PcApi(activeIp,activeKey).action(action)
                     runOnUiThread{toast(response.optString("message","Команда отправлена"))}
-                }catch(e:Exception){runOnUiThread{toast("Ошибка: ${e.message?.take(90)}");refresh()}}
+                }catch(e:Exception){runOnUiThread{
+                    val reason=e.message?:"Неизвестная ошибка"
+                    if(reason.contains("Unsupported command",ignoreCase=true) ||
+                       reason.contains("не поддерживается",ignoreCase=true)){
+                        AlertDialog.Builder(this)
+                            .setTitle("Команда недоступна")
+                            .setMessage("Windows-программа не поддерживает команду «$action». Проверь версию Windows-агента: она должна совпадать с версией на телефоне. Полностью закрой старую программу через Диспетчер задач и запусти новый EXE.")
+                            .setPositiveButton("Понятно",null).show()
+                    }else toast("Ошибка: ${reason.take(120)}")
+                    refresh()
+                }}
             }
         }
         if(confirm){
