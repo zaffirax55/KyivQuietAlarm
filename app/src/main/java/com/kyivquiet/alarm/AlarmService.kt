@@ -49,21 +49,27 @@ class AlarmService:Service(){
   return START_NOT_STICKY
  }
  private fun readState():Boolean?{
-  var c:HttpURLConnection?=null
+  var connection:HttpURLConnection?=null
   return try{
-   c=(URL("https://data.kyivcity.gov.ua/api/action/datastore_search?resource_id=e1216fe6-7cbd-41ad-b478-85983a2e2669&limit=1").openConnection() as HttpURLConnection)
-   c.connectTimeout=6000;c.readTimeout=6000;c.useCaches=false;c.setRequestProperty("Accept","application/json")
-   if(c.responseCode!=200)return null
-   val json=JSONObject(c.inputStream.bufferedReader().use{it.readText()})
-   if(!json.optBoolean("success"))return null
-   val arr=json.optJSONObject("result")?.optJSONArray("records")?:return null
-   val rec=arr.optJSONObject(0)?:return null
-   when(rec.opt("state")?.toString()?.trim()?.lowercase()){
-    "1","true"->true
-    "0","false"->false
-    else->null
+   // The public Kyiv Digital API exposes the *current* city alert state.
+   connection=(URL("https://kyiv.digital/open-api/air-alert/state").openConnection() as HttpURLConnection)
+   connection.connectTimeout=8000
+   connection.readTimeout=8000
+   connection.useCaches=false
+   connection.setRequestProperty("Accept","application/json")
+   if(connection.responseCode!=200)return null
+   val root=JSONObject(connection.inputStream.bufferedReader().use{it.readText()})
+   val possibilities=listOfNotNull(root,root.optJSONObject("current_state"),root.optJSONObject("current"),root.optJSONObject("data"),root.optJSONObject("result"))
+   for(obj in possibilities){
+    val raw=obj.opt("state")
+    val inner=if(raw is JSONObject)raw.opt("state") else raw
+    when(inner?.toString()?.trim()?.lowercase()){
+     "1","true" -> return true
+     "0","false" -> return false
+    }
    }
-  }catch(_:Exception){null}finally{c?.disconnect()}
+   null
+  }catch(_:Exception){null}finally{connection?.disconnect()}
  }
  private fun ring(message:String){
   if(ringing)return
