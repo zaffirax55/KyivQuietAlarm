@@ -17,6 +17,7 @@ class AlarmService : Service() {
     private val main = Handler(Looper.getMainLooper())
     private var player: MediaPlayer? = null
     private var fallbackTone: ToneGenerator? = null
+    private var vibrator: android.os.Vibrator? = null
     private var wake: PowerManager.WakeLock? = null
     private var checking = false
     private var ringing = false
@@ -116,6 +117,35 @@ class AlarmService : Service() {
             .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "KyivQuietAlarm:Ringing").apply {
                 acquire(8 * 60 * 1000L)
             }
+        val chosenBuiltIn=p.getString("built_in","")
+        val soundId=when(chosenBuiltIn){
+            "sunrise"->R.raw.sunrise
+            "dream"->R.raw.dream
+            "pulse"->R.raw.pulse
+            "cosmos"->R.raw.cosmos
+            else->0
+        }
+        if(soundId!=0){
+            try{
+                player=MediaPlayer().apply{
+                    setAudioAttributes(AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_ALARM)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC).build())
+                    setDataSource(this@AlarmService,Uri.parse("android.resource://$packageName/$soundId"))
+                    val v=(p.getInt("volume",85).coerceIn(20,100)/100f)
+                    setVolume(v,v)
+                    isLooping=true
+                    prepare();start()
+                }
+            }catch(_:Exception){player?.release();player=null}
+        }
+        if(p.getBoolean("vibration",true)){
+            try{
+                vibrator=getSystemService(VIBRATOR_SERVICE) as android.os.Vibrator
+                vibrator?.vibrate(VibrationEffect.createWaveform(
+                    longArrayOf(0,360,700,360,1450),0))
+            }catch(_:Exception){}
+        }
         val chosen=p.getString("ring_uri", "")
         val volume=(p.getInt("volume", 85).coerceIn(20,100) / 100f)
         val uris=listOfNotNull(
@@ -123,7 +153,7 @@ class AlarmService : Service() {
             RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM),
             RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
         )
-        for (uri in uris) {
+        if(player==null) for (uri in uris) {
             try {
                 player=MediaPlayer().apply {
                     setDataSource(this@AlarmService, uri)
@@ -158,6 +188,7 @@ class AlarmService : Service() {
         try { player?.stop() } catch (_: Exception) {}
         player?.release();player=null
         fallbackTone?.stopTone();fallbackTone?.release();fallbackTone=null
+        vibrator?.cancel();vibrator=null
         if (wake?.isHeld==true) wake?.release()
         main.removeCallbacksAndMessages(null)
         executor.shutdownNow()
