@@ -1,23 +1,49 @@
-# ТИХО · Київ — Android alarm v8.0
+# PC Control — Android + Windows (v1.0)
 
-An Android alarm clock for Kyiv with accurate minute selection and a quiet-until-all-clear mode.
+Мобильный пульт управления **своим** компьютером Windows 10/11. Интерфейс Android на Kotlin, Windows-приложение на Python/Tkinter (не требует сторонних пакетов при запуске из исходника).
 
-Features:
-- Dark, adaptive native interface; hour and minute picker in 24-hour format.
-- Weekday selection (Mon–Sun) and next scheduled wake-up time in Europe/Kyiv.
-- Four original built-in melodies (Рассвет, Мечта, Импульс, Космос) plus Android system alarm sound picker. Preview selected tones and set in-app volume.
-- Optional vibration while ringing.
-- Snooze for 5 / 10 / 15 minutes; stop and snooze buttons on ringing notification.
-- Manual Kyiv alert-status check; scheduled status check when alarm goes off.
-- During active air alert, reschedule status checks about every minute; ring after the all-clear.
-- If network or data source is unavailable or returns an unrecognized value, ring at normal time (fail-open).
-- Re-arm after reboot, time changes and app updates.
-- Official emergency warnings and sirens are **never muted** by this application.
+## Функции
 
-Official status: https://kyiv.digital/open-api/docs/air-alert.html
-GET https://kyiv.digital/open-api/air-alert/state  Accept: application/json
+- Подключение Android ↔ Windows по локальному Wi‑Fi / доверенной VPN (например Tailscale).
+- Статус Windows: имя, батарея, зарядка, загрузка ОЗУ, время с запуска.
+- Управление громкостью: громче / тише / mute через системные медиаклавиши.
+- Блокировка экрана, сон, выключение и перезагрузка с подтверждением.
+- Отложенное выключение/перезагрузка с 30-секундной задержкой и кнопкой отмены.
+- Минималистичный тёмный дизайн, карточки, обновление статуса каждые 15 с.
+- Входящие команды подписаны HMAC-SHA256 с 256-битным ключом; защита от повтора (nonce) и истечения (120 секунд). Секрет на Android хранится в Keystore.
 
-**Important:** This is a personal alarm clock, not an emergency/safety app. Actual polling intervals may be delayed by Android battery restrictions, airplane mode or connectivity. Test it before relying on it as your only alarm. Xiaomi/Poco: grant exact alarm, notifications, and allow unrestricted battery background activity.
+## Установка Windows
 
-## Build
-GitHub Actions -> "Build Android APK" -> successful run -> artifact `KyivQuietAlarm-debug-apk` -> extract APK. It is a debug-signed sideload build.
+**Вариант A (проще):** скачайте Windows EXE из успешного GitHub Actions артефакта, запустите на Windows. Файл собран PyInstaller; неподписанное ПО может вызвать предупреждение SmartScreen. Не обходите предупреждение, если не доверяете происхождению файла.
+
+**Вариант B (без EXE):** установите Python 3.10+, откройте папку `windows`, дважды нажмите `start.bat`. Зависимости не нужны.
+
+Нажмите **Запустить** в окне Windows. В Windows Firewall разрешайте доступ только в **частных** сетях, **не** в публичных. Запомните IP, скопируйте показанный ключ. ПК и телефон должны быть в одной сети Wi-Fi (без изоляции клиентов).
+
+## Установка Android
+
+Откройте APK на телефоне и разрешите установку. В приложении введите **IP из окна Windows** (без `:43821`) и **64-символьный шестнадцатеричный ключ**, нажмите **Подключиться**. Интерфейс сохраняет секрет зашифрованным в Android Keystore. Важно: время на ПК и телефоне должно быть синхронизировано (ошибка часов не больше двух минут).
+
+## Безопасность и ограничения
+
+- Не пробрасывайте TCP-порт **43821** на роутере и не открывайте его в интернет. Используйте только в доверенной локальной сети или через частную VPN; само соединение HTTP, а не TLS: сообщения защищены HMAC от подмены, **но не зашифрованы** от наблюдения сетевого трафика.
+- Ключ не передаётся по сети. При компрометации смените его в Windows-приложении.
+- Чтобы отключить сервер, нажмите **Остановить** или закройте Windows-приложение.
+- Для полного выключения и сна ПК последующие запросы работать не будут. **Удалённое включение после полного выключения не реализовано**: нужна поддержка Wake-on-LAN BIOS/сетевым адаптером и отдельное включённое сетевое устройство, которое отправит magic packet. У ASUS X515EP с Wi-Fi Realtek 8821CE это не подтверждено; программа не меняет BIOS.
+- Без физической проверки на ноутбуке нельзя гарантировать работу сна с Modern Standby S0. Windows может вместо сна перейти в гибернацию. Проверьте вручную.
+- Не используйте команды питания при несохранённых данных.
+- EXE и APK в GitHub Actions — неподписанные релизным сертификатом тестовые сборки.
+
+## Разработчикам
+
+```sh
+python -m unittest discover -s tests -v
+# Android:
+cd android && gradle assembleDebug
+# Windows EXE:
+python -m pip install pyinstaller==6.16.0
+pyinstaller --onefile --windowed --name PC-Control-Windows windows/agent.py
+```
+
+Protocol `GET /v1/status` or `POST /v1/action` on port 43821.
+Signature: `HMAC-SHA256(bytes.fromhex(secret), METHOD + "\\n" + PATH + "\\n" + unix_millis + "\\n" + nonce_hex + "\\n" + sha256_hex(raw_body))`. Send headers `X-PC-Time`, `X-PC-Nonce`, `X-PC-Signature`; reject replay and >120s skew.
