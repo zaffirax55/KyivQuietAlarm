@@ -27,6 +27,27 @@ jobs:
           gradle-version: '8.9'
       - name: Build APK
         run: gradle --no-daemon --stacktrace assembleDebug
+      - name: Probe city status API (non-blocking diagnostic)
+        continue-on-error: true
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json, urllib.request
+          req = urllib.request.Request(
+              "https://kyiv.digital/open-api/air-alert/state",
+              headers={"Accept": "application/json", "User-Agent": "KyivQuietAlarm-test"})
+          try:
+              with urllib.request.urlopen(req, timeout=12) as response:
+                  raw=response.read(4096).decode("utf-8","replace")
+                  print("HTTP", response.status, "type", response.headers.get("Content-Type"))
+                  try:
+                      obj=json.loads(raw)
+                      print("JSON response sample:", json.dumps(obj,ensure_ascii=False)[:1200])
+                  except Exception:
+                      print("Non-JSON reply", raw[:160])
+          except Exception as exc:
+              print("Endpoint unavailable:", type(exc).__name__, str(exc)[:240])
+          PY
       - uses: actions/upload-artifact@v4
         with:
           name: KyivQuietAlarm-debug-apk
