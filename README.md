@@ -1,7 +1,22 @@
-# KyivQuietAlarm
-Android alarm clock for Kyiv. At the scheduled time it checks the city's current air-raid alert via the Kyiv Digital dataset. If alert active, it rechecks every 60 seconds; when clear, it rings. If status cannot be checked, it rings at the scheduled time (fail-open).
-Emergency alert notifications are never disabled. Do not use this untested application as your only alarm.
+# ТИХО · Київ — Android alarm v7.0
 
-Build: GitHub Actions > Build Android APK > latest successful run > artifact KyivQuietAlarm-debug-apk. On Xiaomi/Poco, allow exact alarms, notifications and unrestricted battery activity.
+An Android alarm clock for Kyiv with accurate minute selection and a quiet-until-all-clear mode.
 
-City data: https://data.kyivcity.gov.ua/dataset/statystyka-povitrianykh-tryvoh-u-misti-kyievi-dep-municipal
+Features:
+- Dark, adaptive native interface; hour and minute picker in 24-hour format.
+- Weekday selection (Mon–Sun) and next scheduled wake-up time in Europe/Kyiv.
+- Pick a system alarm melody via Android ringtone picker, preview it and set in-app volume.
+- Snooze for 5 / 10 / 15 minutes; stop and snooze buttons on ringing notification.
+- Manual Kyiv alert-status check; scheduled status check when alarm goes off.
+- During active air alert, reschedule status checks about every minute; ring after the all-clear.
+- If network or data source is unavailable or returns an unrecognized value, ring at normal time (fail-open).
+- Re-arm after reboot, time changes and app updates.
+- Official emergency warnings and sirens are **never muted** by this application.
+
+Official status: https://kyiv.digital/open-api/docs/air-alert.html
+GET https://kyiv.digital/open-api/air-alert/state  Accept: application/json
+
+**Important:** This is a personal alarm clock, not an emergency/safety app. Actual polling intervals may be delayed by Android battery restrictions, airplane mode or connectivity. Test it before relying on it as your only alarm. Xiaomi/Poco: grant exact alarm, notifications, and allow unrestricted battery background activity.
+
+## Build
+GitHub Actions -> "Build Android APK" -> successful run -> artifact `KyivQuietAlarm-debug-apk` -> extract APK. It is a debug-signed sideload build.
