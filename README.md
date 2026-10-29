@@ -1,11 +1,12 @@
-# ТИХО · Київ — Android alarm v7.0
+# ТИХО · Київ — Android alarm v8.0
 
 An Android alarm clock for Kyiv with accurate minute selection and a quiet-until-all-clear mode.
 
 Features:
 - Dark, adaptive native interface; hour and minute picker in 24-hour format.
 - Weekday selection (Mon–Sun) and next scheduled wake-up time in Europe/Kyiv.
-- Pick a system alarm melody via Android ringtone picker, preview it and set in-app volume.
+- Four original built-in melodies (Рассвет, Мечта, Импульс, Космос) plus Android system alarm sound picker. Preview selected tones and set in-app volume.
+- Optional vibration while ringing.
 - Snooze for 5 / 10 / 15 minutes; stop and snooze buttons on ringing notification.
 - Manual Kyiv alert-status check; scheduled status check when alarm goes off.
 - During active air alert, reschedule status checks about every minute; ring after the all-clear.
