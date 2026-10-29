@@ -196,7 +196,7 @@ class MainActivity : Activity() {
         refreshButton=button("↻  Обновить состояние",Color.rgb(34,47,76),white)
         refreshButton.setOnClickListener{refresh()}
         root.addView(refreshButton)
-        val scroll=ScrollView(this).apply{fillViewport=true;addView(root)}
+        val scroll=ScrollView(this).apply{isFillViewport=true;addView(root)}
         setContentView(scroll)
     }
     private fun toast(s:String) = Toast.makeText(this,s,Toast.LENGTH_LONG).show()
