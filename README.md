@@ -1,23 +1,13 @@
-# ТИХО · Київ — Android alarm v8.0
+# ТИХО · Київ — Android alarm v9.0
 
-An Android alarm clock for Kyiv with accurate minute selection and a quiet-until-all-clear mode.
+**Исправление важного поведения:** режим «Ждать подтверждённого отбоя» включён по умолчанию. При активной тревоге или недоступном городском API приложение не звонит, а повторяет проверку ориентировочно через 60 секунд. Android/HyperOS может задерживать проверки. Будильник звонит только при однозначном ответе API о том, что тревога закончилась (`state=0`).
 
-Features:
-- Dark, adaptive native interface; hour and minute picker in 24-hour format.
-- Weekday selection (Mon–Sun) and next scheduled wake-up time in Europe/Kyiv.
-- Four original built-in melodies (Рассвет, Мечта, Импульс, Космос) plus Android system alarm sound picker. Preview selected tones and set in-app volume.
-- Optional vibration while ringing.
-- Snooze for 5 / 10 / 15 minutes; stop and snooze buttons on ringing notification.
-- Manual Kyiv alert-status check; scheduled status check when alarm goes off.
-- During active air alert, reschedule status checks about every minute; ring after the all-clear.
-- If network or data source is unavailable or returns an unrecognized value, ring at normal time (fail-open).
-- Re-arm after reboot, time changes and app updates.
-- Official emergency warnings and sirens are **never muted** by this application.
+Можно выключить строгий режим в настройках — тогда при недоступном сервере прозвонит обычный будильник по расписанию. Ошибка сервера, отсутствие сети и некорректные данные **не** считаются отбоем.
 
-Official status: https://kyiv.digital/open-api/docs/air-alert.html
-GET https://kyiv.digital/open-api/air-alert/state  Accept: application/json
+**Важное ограничение:** при длительной потере интернета в строгом режиме сигнал может вообще не прозвонить. Если нужно обязательно встать, настройте дополнительный обычный системный будильник.
 
-**Important:** This is a personal alarm clock, not an emergency/safety app. Actual polling intervals may be delayed by Android battery restrictions, airplane mode or connectivity. Test it before relying on it as your only alarm. Xiaomi/Poco: grant exact alarm, notifications, and allow unrestricted battery background activity.
+Статус проверяется по публичному API: https://kyiv.digital/open-api/air-alert/state — только текущий статус, не история тревог. Экстренные уведомления, оповещения «Київ Цифровий» и сирены не отключаются.
 
-## Build
-GitHub Actions -> "Build Android APK" -> successful run -> artifact `KyivQuietAlarm-debug-apk` -> extract APK. It is a debug-signed sideload build.
+Остальные функции: минуты/часы, дни недели, мелодии, громкость, вибрация, отложить на 5/10/15 мин, перезапуск расписания после перезагрузки.
+
+Установка: разрешите точные будильники, уведомления и фоновую работу в HyperOS. APK подписан тестовым debug-ключом; если подпись старого приложения отличается, может потребоваться удаление предыдущей установки (это удалит локальные настройки). Реальная работа на телефоне должна быть протестирована перед использованием.
