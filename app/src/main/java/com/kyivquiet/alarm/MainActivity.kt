@@ -8,6 +8,8 @@ import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.media.Ringtone
+import android.media.MediaPlayer
+import android.media.AudioAttributes
 import android.media.RingtoneManager
 import android.net.Uri
 import android.os.*
@@ -28,6 +30,7 @@ class MainActivity : Activity() {
     private val white = Color.rgb(247, 249, 255)
     private val executor = Executors.newSingleThreadExecutor()
     private var ringtonePreview: Ringtone? = null
+    private var builtInPreview: MediaPlayer? = null
     private var liveStatus = "Проверяем статус Киева…"
     private var statusView: TextView? = null
     private val p get() = AlarmConfig.prefs(this)
@@ -43,6 +46,8 @@ class MainActivity : Activity() {
     override fun onResume() { super.onResume(); if (statusView != null) render() }
     override fun onDestroy() {
         ringtonePreview?.stop()
+        try { builtInPreview?.stop() } catch (_: Exception) {}
+        builtInPreview?.release()
         executor.shutdownNow()
         super.onDestroy()
     }
@@ -226,7 +231,7 @@ class MainActivity : Activity() {
         topSpacing(root,daysCard)
 
         val tuneCard=verticalCard()
-        title(tuneCard,"Звук пробуждения","Выбери мелодию из звуков Android")
+        title(tuneCard,"Звук пробуждения","4 авторские мелодии + звуки телефона")
         spacer(tuneCard,14)
         val tuneRow=horiz()
         val tuneWords=column()
@@ -235,7 +240,7 @@ class MainActivity : Activity() {
         tuneWords.addView(text("Настроить мелодию",12f,mint))
         tuneRow.addView(tuneWords,LinearLayout.LayoutParams(0,-2,1f))
         val choose=button("Выбрать",Color.rgb(63,70,114))
-        choose.setOnClickListener { pickRingtone() }
+        choose.setOnClickListener { showSoundMenu() }
         tuneRow.addView(choose)
         tuneCard.addView(tuneRow)
         spacer(tuneCard,15)
@@ -271,6 +276,15 @@ class MainActivity : Activity() {
             b.setOnClickListener{p.edit().putInt("snooze",mins).apply();render()}
         }
         snoozeCard.addView(snoozeRow)
+        spacer(snoozeCard,18)
+        val vibrateRow=horiz()
+        vibrateRow.addView(text("Вибрация",15f,white,true),LinearLayout.LayoutParams(0,-2,1f))
+        val vibrateSwitch=Switch(this).apply{
+            isChecked=p.getBoolean("vibration",true)
+            setOnCheckedChangeListener{_,checked-> p.edit().putBoolean("vibration",checked).apply()}
+        }
+        vibrateRow.addView(vibrateSwitch)
+        snoozeCard.addView(vibrateRow)
         topSpacing(root,snoozeCard)
 
         val stateCard=verticalCard()
@@ -309,6 +323,27 @@ class MainActivity : Activity() {
             }
         }
     }
+    private fun showSoundMenu(){
+        val names=arrayOf("🌅 Рассвет · нежные колокольчики", "🌙 Мечта · мягкий звук",
+            "⚡ Импульс · бодрый сигнал", "✨ Космос · объёмная мелодия",
+            "♫ Другие мелодии телефона…")
+        val ids=arrayOf("sunrise","dream","pulse","cosmos")
+        AlertDialog.Builder(this)
+            .setTitle("Мелодия пробуждения")
+            .setItems(names){_,index->
+                ringtonePreview?.stop()
+                try{builtInPreview?.stop()}catch(_:Exception){}
+                builtInPreview?.release();builtInPreview=null
+                if(index<4){
+                    p.edit().putString("built_in",ids[index])
+                        .putString("ring_name",names[index].substringAfter(" · ").trim()).apply()
+                    render()
+                }else{
+                    p.edit().remove("built_in").apply()
+                    pickRingtone()
+                }
+            }.show()
+    }
     private fun pickRingtone(){
         val intent=Intent(RingtoneManager.ACTION_RINGTONE_PICKER).apply{
             putExtra(RingtoneManager.EXTRA_RINGTONE_TYPE,RingtoneManager.TYPE_ALARM)
@@ -330,16 +365,44 @@ class MainActivity : Activity() {
             val uri=data?.getParcelableExtra<Uri>(RingtoneManager.EXTRA_RINGTONE_PICKED_URI)
             if(uri != null){
                 val selected=try{RingtoneManager.getRingtone(this,uri)?.getTitle(this)}catch(_:Exception){null}
-                p.edit().putString("ring_uri",uri.toString()).putString("ring_name",selected?:"Выбранная мелодия").apply()
+                p.edit().remove("built_in").putString("ring_uri",uri.toString()).putString("ring_name",selected?:"Выбранная мелодия").apply()
             }else{
-                p.edit().remove("ring_uri").putString("ring_name","Системный будильник").apply()
+                p.edit().remove("built_in").remove("ring_uri").putString("ring_name","Системный будильник").apply()
             }
             render()
         }
     }
     private fun previewRingtone(){
         try {
+            if(builtInPreview?.isPlaying == true){
+                builtInPreview?.stop();builtInPreview?.release();builtInPreview=null;return
+            }
             if(ringtonePreview?.isPlaying == true){ringtonePreview?.stop();return}
+            val chosen=p.getString("built_in","")
+            val raw=when(chosen){
+                "sunrise"->R.raw.sunrise
+                "dream"->R.raw.dream
+                "pulse"->R.raw.pulse
+                "cosmos"->R.raw.cosmos
+                else->0
+            }
+            if(raw!=0){
+                builtInPreview=MediaPlayer().apply{
+                    setAudioAttributes(AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_ALARM)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC).build())
+                    setDataSource(this@MainActivity,Uri.parse("android.resource://$packageName/$raw"))
+                    isLooping=true
+                    val v=p.getInt("volume",85).coerceIn(20,100)/100f
+                    setVolume(v,v)
+                    prepare();start()
+                }
+                Handler(Looper.getMainLooper()).postDelayed({
+                    try{builtInPreview?.stop()}catch(_:Exception){}
+                    builtInPreview?.release();builtInPreview=null
+                },6500)
+                return
+            }
             val saved=p.getString("ring_uri","")
             val uri=if(saved.isNullOrBlank())RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM) else Uri.parse(saved)
             ringtonePreview=RingtoneManager.getRingtone(this,uri)
