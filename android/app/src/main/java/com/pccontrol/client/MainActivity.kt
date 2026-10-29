@@ -33,6 +33,7 @@ class MainActivity : Activity() {
     private var activeKey = ""
     private lateinit var ipInput: EditText
     private lateinit var keyInput: EditText
+    private lateinit var macInput: EditText
     private lateinit var statusText: TextView
     private lateinit var deviceText: TextView
     private lateinit var batteryText: TextView
@@ -62,7 +63,7 @@ class MainActivity : Activity() {
     override fun onPause() { polling = false; handler.removeCallbacks(checker); super.onPause() }
     override fun onDestroy() { executor.shutdownNow(); super.onDestroy() }
     private val checker = object : Runnable {
-        override fun run() { if (polling) { if (connected) refresh(); handler.postDelayed(this, 15000) } }
+        override fun run() { if (polling) { if (activeIp.isNotBlank() && activeKey.isNotBlank()) refresh(); handler.postDelayed(this, 15000) } }
     }
     private fun d(n:Int) = (resources.displayMetrics.density*n+0.5f).toInt()
     private fun shape(color:Int, radius:Int=20, stroke:Int?=null) = GradientDrawable().apply {
@@ -156,6 +157,35 @@ class MainActivity : Activity() {
         connectCard.addView(linkButton)
         add(root,connectCard)
 
+        val wakeCard=card().apply { background=shape(Color.rgb(26,42,62),23) }
+        wakeCard.addView(cardTitle("Пробуждение ноутбука", "Wake-on-LAN · только в локальной сети"));gap(wakeCard,13)
+        val savedMac=getSharedPreferences("pc_wol",MODE_PRIVATE).getString("mac","")?:""
+        macInput=input("MAC сетевого адаптера · AA:BB:CC:DD:EE:FF")
+        macInput.inputType=InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_CHARACTERS
+        macInput.setText(savedMac)
+        wakeCard.addView(macInput);gap(wakeCard,12)
+        val wakeButton=button("⚡  Отправить сигнал пробуждения",Color.rgb(44,104,104),white)
+        wakeButton.setOnClickListener {
+            val mac=macInput.text.toString().trim()
+            val ip=ipInput.text.toString().trim()
+            if(WakeOnLan.normalizeMac(mac)==null){toast("Введи MAC из Windows-программы");return@setOnClickListener}
+            getSharedPreferences("pc_wol",MODE_PRIVATE).edit().putString("mac",mac).apply()
+            executor.execute {
+                try {
+                    WakeOnLan.send(mac,ip)
+                    runOnUiThread {
+                        toast("Magic packet отправлен. Пробуждение зависит от настроек адаптера.")
+                        handler.postDelayed({refresh()}, 9000)
+                    }
+                } catch (e:Exception) {
+                    runOnUiThread { toast("Не удалось отправить пакет: ${e.message}") }
+                }
+            }
+        }
+        wakeCard.addView(wakeButton);gap(wakeCard,10)
+        wakeCard.addView(txt("Важно: у ASUS с Wi-Fi пробуждение может быть недоступно. Для работы часто нужен Ethernet и поддержка Wake-on-LAN в BIOS. Это не кнопка принудительного включения.",12f,grey))
+        add(root,wakeCard)
+
         val control=card()
         control.addView(cardTitle("Быстрые действия", "Кнопки работают только после подключения"));gap(control,16)
         val volumeLabel=txt("ГРОМКОСТЬ",12f,mint,true)
@@ -202,7 +232,7 @@ class MainActivity : Activity() {
     private fun toast(s:String) = Toast.makeText(this,s,Toast.LENGTH_LONG).show()
     private fun setStatus(online:Boolean,message:String?=null){
         connected=online
-        statusText.text=if(online)"●  В СЕТИ" else "○  НЕ В СЕТИ"
+        statusText.text=if(online)"●  В СЕТИ" else "○  НЕТ СВЯЗИ"
         statusText.setTextColor(if(online)mint else coral)
         if(message!=null)toast(message)
     }

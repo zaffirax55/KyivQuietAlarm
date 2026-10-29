@@ -4,6 +4,9 @@ Start via start.bat or python agent.py. Requires Windows 10/11 and Python 3.10+.
 from __future__ import annotations
 
 import ctypes
+import csv
+import io
+import re
 import hashlib
 import hmac
 import json
@@ -21,6 +24,7 @@ from pathlib import Path
 from tkinter import messagebox, ttk
 
 PORT = 43821
+VERSION = "1.1"
 APP_DIR = Path(os.getenv("APPDATA", str(Path.home()))) / "PCControl"
 CONFIG = APP_DIR / "settings.json"
 MAX_BODY = 4096
@@ -64,6 +68,31 @@ def local_ip() -> str:
             return socket.gethostbyname(socket.gethostname())
         except OSError:
             return "127.0.0.1"
+
+
+def available_macs() -> list[tuple[str, str]]:
+    """List candidate Windows network adapters without requiring admin rights.
+
+    WOL normally requires a wired adapter; listing a MAC does not imply WOL support.
+    """
+    if os.name != "nt":
+        return []
+    try:
+        result = subprocess.run(["getmac", "/v", "/fo", "csv"], capture_output=True,
+                                timeout=5, creationflags=subprocess.CREATE_NO_WINDOW)
+        raw = result.stdout.decode("mbcs", errors="replace")
+        rows = list(csv.reader(io.StringIO(raw)))
+        found = []
+        for row in rows[1:]:
+            if len(row) < 3:
+                continue
+            name = row[1].strip() or row[0].strip()
+            mac = row[2].strip().replace("-", ":").upper()
+            if re.fullmatch(r"(?:[0-9A-F]{2}:){5}[0-9A-F]{2}", mac):
+                found.append((name[:55], mac))
+        return found
+    except (OSError, UnicodeError, subprocess.TimeoutExpired, csv.Error):
+        return []
 
 
 def verify(method: str, path: str, body: bytes, headers: dict[str, str], now: float | None = None) -> bool:
@@ -126,7 +155,7 @@ def info() -> dict:
         uptime = int(kernel.GetTickCount64() // 1000)
     return {"name": platform.node(), "os": platform.platform(), "battery": battery_status(),
             "memory": memory_status(), "uptime_seconds": uptime,
-            "version": "1.0", "power_enabled": State.allow_power}
+            "version": VERSION, "power_enabled": State.allow_power}
 
 
 def media_key(code: int) -> None:
@@ -226,14 +255,17 @@ class App:
         State.secret = load_secret()
         self.root = tk.Tk()
         self.root.title("PC Control • Windows")
-        self.root.geometry("590x570")
-        self.root.minsize(520, 500)
+        self.root.geometry("625x690")
+        self.root.minsize(570, 630)
         self.root.configure(bg="#0b1220")
         self.server: ThreadingHTTPServer | None = None
         self.thread: threading.Thread | None = None
         self.status_text = tk.StringVar(value="●  Не запущен")
         self.key_text = tk.StringVar(value="••••••••••••••••")
         self.key_visible = False
+        self.macs = available_macs()
+        self.mac_choice = tk.StringVar(value=(
+            f"{self.macs[0][1]}  ·  {self.macs[0][0]}" if self.macs else "MAC не найден · см. ipconfig /all"))
         self.build_ui()
         self.root.protocol("WM_DELETE_WINDOW", self.close)
 
@@ -264,7 +296,16 @@ class App:
         tk.Button(tools, text="Показать / скрыть", command=self.show_secret).pack(side="left")
         tk.Button(tools, text="Скопировать", command=self.copy_secret).pack(side="left", padx=8)
         tk.Button(tools, text="Сменить ключ", command=self.rotate_secret).pack(side="left")
-        self.label(box, "1. Нажми «Запустить».  2. В Windows Firewall разреши доступ только в частной сети.", 10).pack(anchor="w", pady=(19, 4))
+        nic = tk.Frame(box, bg="#172238", padx=18, pady=12)
+        nic.pack(fill="x", pady=(13, 3))
+        self.label(nic, "WAKE-ON-LAN · MAC-АДРЕС", 11, "#9dc4ff", True).pack(anchor="w")
+        self.mac_picker = ttk.Combobox(nic, state="readonly", textvariable=self.mac_choice,
+                                      values=[f"{mac}  ·  {name}" for name, mac in self.macs]
+                                      or ["MAC не найден · см. ipconfig /all"])
+        self.mac_picker.pack(fill="x", pady=(8, 7))
+        tk.Button(nic, text="Скопировать MAC", command=self.copy_mac).pack(anchor="w")
+        self.label(nic, "Wake-on-LAN требует поддержки BIOS и адаптера. По Wi-Fi часто не работает.", 9, "#fbbf89").pack(anchor="w", pady=(8, 0))
+        self.label(box, "1. Нажми «Запустить».  2. В Windows Firewall разреши доступ только в частной сети.", 10).pack(anchor="w", pady=(12, 4))
         self.label(box, "3. Телефон и ноутбук должны быть в одной Wi-Fi сети.", 10).pack(anchor="w", pady=4)
         self.label(box, "4. В Android введи IP и скопированный ключ, затем нажми «Подключиться».", 10).pack(anchor="w", pady=4)
         self.label(box, "Через интернет: только через личную VPN-сеть, без проброса порта.", 10, "#fbbf89").pack(anchor="w", pady=(12, 3))
@@ -300,6 +341,16 @@ class App:
         self.root.clipboard_clear()
         self.root.clipboard_append(State.secret)
         messagebox.showinfo("Скопировано", "Ключ скопирован. Не передавай его другим людям.")
+
+    def copy_mac(self) -> None:
+        value = self.mac_choice.get().split("  ·  ")[0].strip()
+        if not re.fullmatch(r"(?:[0-9A-F]{2}:){5}[0-9A-F]{2}", value):
+            messagebox.showwarning("MAC", "Не найден корректный MAC. Проверь ipconfig /all.")
+            return
+        self.root.clipboard_clear()
+        self.root.clipboard_append(value)
+        messagebox.showinfo("MAC скопирован", "Вставь MAC в раздел Wake-on-LAN на Android.\n"
+                            "Для пробуждения обычно нужен Ethernet и разрешение в BIOS/Windows.")
 
     def rotate_secret(self) -> None:
         if not messagebox.askyesno("Сменить ключ?", "Android потеряет доступ до ввода нового ключа. Продолжить?"):
