@@ -68,10 +68,10 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p release
-          mv release-files/app-debug.apk release/PC-Control-Android-v1.1.apk
-          mv release-files/PC-Control-Windows.exe release/PC-Control-Windows-v1.1.exe
+          mv release-files/app-debug.apk release/PC-Control-Android-v1.2.apk
+          mv release-files/PC-Control-Windows.exe release/PC-Control-Windows-v1.2.exe
           cd release
-          sha256sum PC-Control-Android-v1.1.apk PC-Control-Windows-v1.1.exe > SHA256SUMS.txt
+          sha256sum PC-Control-Android-v1.2.apk PC-Control-Windows-v1.2.exe > SHA256SUMS.txt
           ls -lah
       - name: Publish public GitHub Release
         env:
@@ -79,12 +79,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          gh release create pc-control-v1.1 \
-            release/PC-Control-Android-v1.1.apk \
-            release/PC-Control-Windows-v1.1.exe \
+          gh release create pc-control-v1.2 \
+            release/PC-Control-Android-v1.2.apk \
+            release/PC-Control-Windows-v1.2.exe \
             release/SHA256SUMS.txt \
             --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
-            --title "PC Control v1.1 — Android + Windows" \
+            --title "PC Control v1.2 — Android + Windows" \
             --notes "Комплект для личного управления Windows с Android в одной локальной Wi-Fi сети. Прямые файлы APK и EXE; тестовые сборки без коммерческой подписи. Перед использованием прочитайте README ветки pc-control. Не открывайте порт 43821 в интернет. Wake-on-LAN зависит от оборудования и не гарантирует включение." \
             --latest=false

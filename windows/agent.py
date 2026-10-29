@@ -24,7 +24,7 @@ from pathlib import Path
 from tkinter import messagebox, ttk
 
 PORT = 43821
-VERSION = "1.1"
+VERSION = "1.2"
 APP_DIR = Path(os.getenv("APPDATA", str(Path.home()))) / "PCControl"
 CONFIG = APP_DIR / "settings.json"
 MAX_BODY = 4096
@@ -56,6 +56,8 @@ def save_secret(secret: str) -> None:
 class State:
     secret: str = ""
     allow_power = True
+    cached_macs: list[tuple[str, str]] = []
+    wake_armed_devices: list[str] = []
 
 
 def local_ip() -> str:
@@ -93,6 +95,38 @@ def available_macs() -> list[tuple[str, str]]:
         return found
     except (OSError, UnicodeError, subprocess.TimeoutExpired, csv.Error):
         return []
+
+
+def wake_capable_devices() -> list[str]:
+    """Read-only Windows powercfg diagnostic; not proof of S0/S5 Wake-on-LAN."""
+    if os.name != "nt":
+        return []
+    try:
+        result = subprocess.run(["powercfg", "/devicequery", "wake_armed"],
+                                capture_output=True, timeout=6,
+                                creationflags=subprocess.CREATE_NO_WINDOW)
+        if result.returncode:
+            return []
+        output = result.stdout.decode("mbcs", errors="replace")
+        return [x.strip()[:110] for x in output.splitlines() if x.strip()][:30]
+    except (OSError, UnicodeError, subprocess.TimeoutExpired):
+        return []
+
+
+def power_diagnostics() -> str:
+    """Display Windows-reported capabilities only; never modify BIOS or settings."""
+    sections = []
+    for cmd in (["powercfg", "/a"], ["powercfg", "/devicequery", "wake_armed"]):
+        try:
+            proc = subprocess.run(cmd, capture_output=True, timeout=8,
+                                  creationflags=subprocess.CREATE_NO_WINDOW)
+            output = proc.stdout.decode("mbcs", errors="replace").strip()
+            if not output:
+                output = proc.stderr.decode("mbcs", errors="replace").strip()
+            sections.append(" ".join(cmd) + "\n" + (output[:2800] or "Нет данных"))
+        except (OSError, UnicodeError, subprocess.TimeoutExpired) as exc:
+            sections.append(" ".join(cmd) + "\nОшибка: " + str(exc)[:120])
+    return "\n\n".join(sections) + "\n\nВнимание: Wake-on-LAN по Wi-Fi/S0 и после выключения S5 требует отдельной поддержки оборудования."
 
 
 def verify(method: str, path: str, body: bytes, headers: dict[str, str], now: float | None = None) -> bool:
@@ -155,7 +189,9 @@ def info() -> dict:
         uptime = int(kernel.GetTickCount64() // 1000)
     return {"name": platform.node(), "os": platform.platform(), "battery": battery_status(),
             "memory": memory_status(), "uptime_seconds": uptime,
-            "version": VERSION, "power_enabled": State.allow_power}
+            "version": VERSION, "power_enabled": State.allow_power,
+            "adapters": [{"name": name, "mac": mac} for name, mac in State.cached_macs],
+            "wake_armed_devices": State.wake_armed_devices}
 
 
 def media_key(code: int) -> None:
@@ -176,7 +212,30 @@ def execute(action: str) -> str:
     if action == "mute":
         media_key(0xAD)
         return "Звук переключён"
-    if action in ("lock", "sleep", "shutdown", "restart", "cancel_shutdown"):
+    media_actions = {
+        "media_play_pause": (0xB3, "Воспроизведение / пауза"),
+        "media_next": (0xB0, "Следующий трек"),
+        "media_prev": (0xB1, "Предыдущий трек"),
+        "slide_next": (0x22, "Следующий слайд"),
+        "slide_prev": (0x21, "Предыдущий слайд"),
+        "presentation_start": (0x74, "Начать презентацию (F5)"),
+        "presentation_end": (0x1B, "Закрыть презентацию (Esc)"),
+    }
+    if action in media_actions:
+        vk, reply = media_actions[action]
+        media_key(vk)
+        return reply
+    if action == "find_pc":
+        if os.name != "nt":
+            raise OSError("Windows only")
+        def beep() -> None:
+            import winsound
+            for freq in (880, 1100, 1320):
+                winsound.Beep(freq, 190)
+                time.sleep(.12)
+        threading.Thread(target=beep, daemon=True).start()
+        return "На ноутбуке воспроизводится сигнал"
+    if action in ("lock", "sleep", "shutdown", "restart", "cancel_shutdown", "display_off"):
         if not State.allow_power:
             raise PermissionError("Power controls disabled by user")
         if os.name != "nt":
@@ -184,6 +243,13 @@ def execute(action: str) -> str:
         if action == "cancel_shutdown":
             subprocess.run(["shutdown", "/a"], capture_output=True, timeout=8)
             return "Отмена выключения отправлена"
+        if action == "display_off":
+            def sleep_display() -> None:
+                ctypes.windll.user32.SendMessageW(0xFFFF, 0x0112, 0xF170, 2)
+            timer = threading.Timer(1.2, sleep_display)
+            timer.daemon = True
+            timer.start()
+            return "Экран выключится через секунду. Компьютер продолжит работать"
         if action == "lock":
             if not ctypes.windll.user32.LockWorkStation():
                 raise OSError("Unable to lock workstation")
@@ -264,6 +330,8 @@ class App:
         self.key_text = tk.StringVar(value="••••••••••••••••")
         self.key_visible = False
         self.macs = available_macs()
+        State.cached_macs = self.macs
+        State.wake_armed_devices = wake_capable_devices()
         self.mac_choice = tk.StringVar(value=(
             f"{self.macs[0][1]}  ·  {self.macs[0][0]}" if self.macs else "MAC не найден · см. ipconfig /all"))
         self.build_ui()
@@ -303,7 +371,10 @@ class App:
                                       values=[f"{mac}  ·  {name}" for name, mac in self.macs]
                                       or ["MAC не найден · см. ipconfig /all"])
         self.mac_picker.pack(fill="x", pady=(8, 7))
-        tk.Button(nic, text="Скопировать MAC", command=self.copy_mac).pack(anchor="w")
+        nic_buttons = tk.Frame(nic, bg="#172238")
+        nic_buttons.pack(anchor="w")
+        tk.Button(nic_buttons, text="Скопировать MAC", command=self.copy_mac).pack(side="left")
+        tk.Button(nic_buttons, text="Проверить WOL / S0", command=self.show_power_diagnostics).pack(side="left", padx=9)
         self.label(nic, "Wake-on-LAN требует поддержки BIOS и адаптера. По Wi-Fi часто не работает.", 9, "#fbbf89").pack(anchor="w", pady=(8, 0))
         self.label(box, "1. Нажми «Запустить».  2. В Windows Firewall разреши доступ только в частной сети.", 10).pack(anchor="w", pady=(12, 4))
         self.label(box, "3. Телефон и ноутбук должны быть в одной Wi-Fi сети.", 10).pack(anchor="w", pady=4)
@@ -351,6 +422,22 @@ class App:
         self.root.clipboard_append(value)
         messagebox.showinfo("MAC скопирован", "Вставь MAC в раздел Wake-on-LAN на Android.\n"
                             "Для пробуждения обычно нужен Ethernet и разрешение в BIOS/Windows.")
+
+    def show_power_diagnostics(self) -> None:
+        def worker():
+            report = power_diagnostics()
+            def popup():
+                window = tk.Toplevel(self.root)
+                window.title("Диагностика питания — только чтение")
+                window.geometry("760x520")
+                area = tk.Text(window, bg="#172238", fg="#f1f5ff", wrap="word",
+                               font=("Consolas", 10), padx=12, pady=12)
+                area.pack(fill="both", expand=True)
+                area.insert("1.0", report)
+                area.configure(state="disabled")
+            if self.root.winfo_exists():
+                self.root.after(0, popup)
+        threading.Thread(target=worker, daemon=True).start()
 
     def rotate_secret(self) -> None:
         if not messagebox.askyesno("Сменить ключ?", "Android потеряет доступ до ввода нового ключа. Продолжить?"):

@@ -16,6 +16,7 @@ import android.view.inputmethod.InputMethodManager
 import android.content.Context
 import android.widget.*
 import org.json.JSONObject
+import org.json.JSONArray
 import java.util.concurrent.Executors
 
 class MainActivity : Activity() {
@@ -40,6 +41,10 @@ class MainActivity : Activity() {
     private lateinit var memoryText: TextView
     private lateinit var uptimeText: TextView
     private lateinit var refreshButton: TextView
+    private lateinit var wakeState: TextView
+    private var macChoices: List<Pair<String,String>> = emptyList()
+    private var wakeMonitorActive = false
+    private var wakeMonitorDeadline = 0L
     private var polling = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -60,10 +65,49 @@ class MainActivity : Activity() {
         handler.removeCallbacks(checker)
         handler.postDelayed(checker, 15000)
     }
-    override fun onPause() { polling = false; handler.removeCallbacks(checker); super.onPause() }
+    override fun onPause() {
+        polling = false
+        handler.removeCallbacks(checker)
+        handler.removeCallbacks(wakeChecker)
+        wakeMonitorActive = false
+        super.onPause()
+    }
     override fun onDestroy() { executor.shutdownNow(); super.onDestroy() }
     private val checker = object : Runnable {
-        override fun run() { if (polling) { if (activeIp.isNotBlank() && activeKey.isNotBlank()) refresh(); handler.postDelayed(this, 15000) } }
+        override fun run() { if (polling) { if (activeIp.isNotBlank() && activeKey.isNotBlank() && !wakeMonitorActive) refresh(); handler.postDelayed(this, 15000) } }
+    }
+    private val wakeChecker = object : Runnable {
+        override fun run() {
+            if (!polling || !wakeMonitorActive) return
+            if (System.currentTimeMillis() > wakeMonitorDeadline) {
+                wakeMonitorActive = false
+                wakeState.text = "Нет ответа за 60 сек. Wake-on-LAN может быть недоступен на этом ASUS."
+                return
+            }
+            if (activeIp.isNotBlank() && activeKey.isNotBlank()) {
+                val ip = activeIp
+                val key = activeKey
+                executor.execute {
+                    try {
+                        val result = PcApi(ip,key).status()
+                        runOnUiThread {
+                            if (!wakeMonitorActive || isFinishing) return@runOnUiThread
+                            wakeMonitorActive = false
+                            showDevice(result)
+                            setStatus(true)
+                            wakeState.text = "✓ Ноутбук отвечает — подключение восстановлено"
+                        }
+                    } catch (_: Exception) {
+                        runOnUiThread {
+                            if (wakeMonitorActive && !isFinishing) handler.postDelayed(this, 4500)
+                        }
+                    }
+                }
+            } else {
+                wakeMonitorActive = false
+                wakeState.text = "Нужны IP и ключ подключения, чтобы проверить пробуждение"
+            }
+        }
     }
     private fun d(n:Int) = (resources.displayMetrics.density*n+0.5f).toInt()
     private fun shape(color:Int, radius:Int=20, stroke:Int?=null) = GradientDrawable().apply {
@@ -126,7 +170,10 @@ class MainActivity : Activity() {
         batteryText=statistic("Батарея")
         memoryText=statistic("ОЗУ")
         uptimeText=statistic("Работает")
-        hero.addView(stats)
+        hero.addView(stats);gap(hero,15)
+        val wakeHeroButton=button("⏻   ВКЛЮЧИТЬ НОУТБУК",Color.rgb(96,87,236))
+        wakeHeroButton.setOnClickListener { wakePc() }
+        hero.addView(wakeHeroButton)
         add(root,hero)
 
         val connectCard=card()
@@ -163,27 +210,16 @@ class MainActivity : Activity() {
         macInput=input("MAC сетевого адаптера · AA:BB:CC:DD:EE:FF")
         macInput.inputType=InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_CHARACTERS
         macInput.setText(savedMac)
-        wakeCard.addView(macInput);gap(wakeCard,12)
-        val wakeButton=button("⚡  Отправить сигнал пробуждения",Color.rgb(44,104,104),white)
-        wakeButton.setOnClickListener {
-            val mac=macInput.text.toString().trim()
-            val ip=ipInput.text.toString().trim()
-            if(WakeOnLan.normalizeMac(mac)==null){toast("Введи MAC из Windows-программы");return@setOnClickListener}
-            getSharedPreferences("pc_wol",MODE_PRIVATE).edit().putString("mac",mac).apply()
-            executor.execute {
-                try {
-                    WakeOnLan.send(mac,ip)
-                    runOnUiThread {
-                        toast("Magic packet отправлен. Пробуждение зависит от настроек адаптера.")
-                        handler.postDelayed({refresh()}, 9000)
-                    }
-                } catch (e:Exception) {
-                    runOnUiThread { toast("Не удалось отправить пакет: ${e.message}") }
-                }
-            }
-        }
-        wakeCard.addView(wakeButton);gap(wakeCard,10)
-        wakeCard.addView(txt("Важно: у ASUS с Wi-Fi пробуждение может быть недоступно. Для работы часто нужен Ethernet и поддержка Wake-on-LAN в BIOS. Это не кнопка принудительного включения.",12f,grey))
+        wakeCard.addView(macInput);gap(wakeCard,10)
+        val selectAdapter=button("Выбрать MAC с ноутбука",Color.rgb(44,61,86),mint)
+        selectAdapter.setOnClickListener{ chooseMac() }
+        wakeCard.addView(selectAdapter);gap(wakeCard,11)
+        val wakeButton=button("⚡  Отправить Wake-on-LAN",Color.rgb(44,104,104),white)
+        wakeButton.setOnClickListener { wakePc() }
+        wakeCard.addView(wakeButton);gap(wakeCard,11)
+        wakeState=txt("После сигнала проверим, отвечает ли Windows, в течение 60 секунд.",13f,mint)
+        wakeCard.addView(wakeState);gap(wakeCard,10)
+        wakeCard.addView(txt("Работает только при поддержке адаптера/BIOS и в домашней сети. Если ASUS выключен полностью, пробуждение по Wi-Fi может не сработать. Мы не меняем BIOS.",12f,grey))
         add(root,wakeCard)
 
         val control=card()
@@ -199,7 +235,18 @@ class MainActivity : Activity() {
         actionButton("−  Тише","volume_down")
         actionButton("◌  Выкл. звук","mute")
         actionButton("+  Громче","volume_up")
-        control.addView(volumes);gap(control,19)
+        control.addView(volumes);gap(control,16)
+        control.addView(txt("МУЗЫКА И ВИДЕО",12f,mint,true));gap(control,10)
+        val media=row()
+        fun mediaButton(label:String, action:String) {
+            val btn=button(label,Color.rgb(40,72,92))
+            media.addView(btn, LinearLayout.LayoutParams(0,-2,1f).apply{setMargins(d(3),0,d(3),0)})
+            btn.setOnClickListener{perform(action,false)}
+        }
+        mediaButton("⏮  Назад","media_prev")
+        mediaButton("⏯  Пауза","media_play_pause")
+        mediaButton("⏭  Далее","media_next")
+        control.addView(media);gap(control,17)
         control.addView(txt("ЭКРАН И ПИТАНИЕ",12f,mint,true));gap(control,10)
         val power1=row()
         fun powerButton(r:LinearLayout,label:String,action:String,color:Int,confirm:Boolean=true){
@@ -216,8 +263,30 @@ class MainActivity : Activity() {
         control.addView(power2);gap(control,10)
         val abort=button("Отменить запланированное выключение",Color.rgb(44,55,80),grey)
         abort.setOnClickListener{perform("cancel_shutdown",false)}
-        control.addView(abort)
+        control.addView(abort);gap(control,10)
+        val displayAndFind=row()
+        powerButton(displayAndFind,"▣  Погасить экран","display_off",Color.rgb(41,64,81),true)
+        powerButton(displayAndFind,"♫  Найти ноутбук","find_pc",Color.rgb(40,73,69),false)
+        control.addView(displayAndFind)
         add(root,control)
+
+        val slides=card()
+        slides.addView(cardTitle("Пульт презентации","PowerPoint и другие программы, использующие Page Up / Page Down"))
+        gap(slides,15)
+        val pages=row()
+        fun slideButton(r:LinearLayout,label:String,action:String){
+            val b=button(label,Color.rgb(43,56,101))
+            r.addView(b,LinearLayout.LayoutParams(0,-2,1f).apply{setMargins(d(4),0,d(4),0)})
+            b.setOnClickListener { perform(action,false) }
+        }
+        slideButton(pages,"←  Назад","slide_prev")
+        slideButton(pages,"Дальше  →","slide_next")
+        slides.addView(pages);gap(slides,10)
+        val presentation=row()
+        slideButton(presentation,"▶  Начать F5","presentation_start")
+        slideButton(presentation,"■  Завершить","presentation_end")
+        slides.addView(presentation)
+        add(root,slides)
 
         val foot=card().apply{background=shape(Color.rgb(21,44,54),20)}
         foot.addView(txt("🛡  БЕЗОПАСНОСТЬ",13f,mint,true));gap(foot,8)
@@ -251,6 +320,27 @@ class MainActivity : Activity() {
     }
     private fun showDevice(result:JSONObject){
         val x=result.optJSONObject("device")?:return
+        val adapters=x.optJSONArray("adapters")
+        if(adapters != null){
+            macChoices = (0 until adapters.length()).mapNotNull { idx ->
+                val ob=adapters.optJSONObject(idx) ?: return@mapNotNull null
+                val mac=ob.optString("mac")
+                val name=ob.optString("name","Адаптер")
+                if(WakeOnLan.normalizeMac(mac)==null) null else (name to mac)
+            }
+            // Prefer a physical wired adapter for WOL. Keep user's existing choice.
+            if(macInput.text.toString().trim().isEmpty()){
+                val recommended=macChoices.firstOrNull {
+                    val label=it.first.lowercase()
+                    (label.contains("ethernet") || label.contains("realtek pci") || label.contains("lan")) &&
+                        !label.contains("wireless") && !label.contains("virtual")
+                } ?: macChoices.firstOrNull()
+                if(recommended!=null) {
+                    macInput.setText(recommended.second)
+                    getSharedPreferences("pc_wol",MODE_PRIVATE).edit().putString("mac",recommended.second).apply()
+                }
+            }
+        }
         deviceText.text=x.optString("name","Windows")
         val b=x.optJSONObject("battery")
         val pct=b?.optInt("percent",-1)?:-1
@@ -270,6 +360,46 @@ class MainActivity : Activity() {
             }catch(e:Exception){runOnUiThread{setStatus(false)}}
         }
     }
+    private fun chooseMac(){
+        if(macChoices.isEmpty()){
+            toast("Сначала подключись к запущенной Windows-программе — она передаст MAC-адреса")
+            return
+        }
+        AlertDialog.Builder(this)
+            .setTitle("Сетевой адаптер ноутбука")
+            .setItems(macChoices.map { "${it.first}  ·  ${it.second}" }.toTypedArray()){_,selected->
+                val mac=macChoices[selected].second
+                macInput.setText(mac)
+                getSharedPreferences("pc_wol",MODE_PRIVATE).edit().putString("mac",mac).apply()
+                toast("MAC сохранён. Выбор адаптера не означает поддержку Wake-on-LAN.")
+            }
+            .setNegativeButton("Закрыть",null).show()
+    }
+    private fun wakePc(){
+        val mac=macInput.text.toString().trim()
+        val ip=ipInput.text.toString().trim()
+        if(WakeOnLan.normalizeMac(mac)==null){
+            toast("Укажи MAC. Пока ноутбук включён, подключись и нажми «Выбрать MAC с ноутбука»")
+            return
+        }
+        getSharedPreferences("pc_wol",MODE_PRIVATE).edit().putString("mac",mac).apply()
+        wakeState.text="Отправляем сигнал пробуждения…"
+        executor.execute {
+            try {
+                val count=WakeOnLan.send(mac,ip)
+                runOnUiThread {
+                    if(isFinishing)return@runOnUiThread
+                    wakeState.text="✓ Отправлено $count пакета(ов). Проверяем подключение до 60 секунд…"
+                    wakeMonitorActive = true
+                    wakeMonitorDeadline = System.currentTimeMillis()+60_000L
+                    handler.removeCallbacks(wakeChecker)
+                    handler.postDelayed(wakeChecker,4000)
+                }
+            }catch(e:Exception){
+                runOnUiThread { if(!isFinishing){ wakeState.text="Ошибка отправки: ${e.message?.take(100)}";toast("Проверь домашний Wi-Fi") } }
+            }
+        }
+    }
     private fun perform(action:String,confirm:Boolean){
         if(!connected){toast("Сначала подключись к Windows");return}
         val run={
@@ -285,6 +415,7 @@ class MainActivity : Activity() {
                 "sleep"->"Перевести ноутбук в режим сна? Управление будет недоступно до его пробуждения."
                 "restart"->"Перезагрузить Windows? Перед этим сохрани файлы. Команда выполнится через 30 секунд."
                 "shutdown"->"Выключить Windows? Несохранённые данные могут быть потеряны. Команда выполнится через 30 секунд."
+                "display_off"->"Погасить только экран ноутбука? Компьютер и сеть продолжат работать."
                 else->"Выполнить команду?"
             }
             AlertDialog.Builder(this).setTitle("Подтвердить действие").setMessage(msg)
