@@ -52,3 +52,37 @@ jobs:
         with:
           name: KyivQuietAlarm-debug-apk
           path: app/build/outputs/apk/debug/app-debug.apk
+
+  release:
+    name: Publish v9.0 APK
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download tested APK
+        uses: actions/download-artifact@v4
+        with:
+          name: KyivQuietAlarm-debug-apk
+          path: release
+      - name: Prepare APK and checksum
+        shell: bash
+        run: |
+          set -euo pipefail
+          mv release/app-debug.apk release/Tyho-Kyiv-v9.0.apk
+          cd release
+          unzip -t Tyho-Kyiv-v9.0.apk | tail -n 2
+          sha256sum Tyho-Kyiv-v9.0.apk > SHA256SUMS.txt
+      - name: Publish direct APK download
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          gh release create tyho-kyiv-v9.0 \
+            release/Tyho-Kyiv-v9.0.apk \
+            release/SHA256SUMS.txt \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "ТИХО · Київ v9.0 — ожидать подтверждённый отбой" \
+            --notes "По умолчанию программа НЕ звонит при недоступном статусе и ждёт подтверждённого отбоя (API state=0). Это может приводить к пропуску будильника без интернета. Можно отключить строгий режим. Официальные оповещения о тревоге никогда не отключаются. Сборка не тестировалась на реальном телефоне." \
+            --latest=false
