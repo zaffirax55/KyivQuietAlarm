@@ -24,7 +24,7 @@ from pathlib import Path
 from tkinter import messagebox, ttk
 
 PORT = 43821
-VERSION = "1.2"
+VERSION = "1.3"
 APP_DIR = Path(os.getenv("APPDATA", str(Path.home()))) / "PCControl"
 CONFIG = APP_DIR / "settings.json"
 MAX_BODY = 4096
@@ -262,7 +262,7 @@ def execute(action: str) -> str:
             flag = "/s" if action == "shutdown" else "/r"
             subprocess.Popen(["shutdown", flag, "/t", "30"], creationflags=subprocess.CREATE_NO_WINDOW)
             return "Выполнится через 30 секунд; можно отменить"
-    raise ValueError("Unsupported command")
+    raise ValueError(f"Unsupported command: {action}. Windows agent v{VERSION}. Update both PC Control apps.")
 
 
 class Handler(BaseHTTPRequestHandler):
