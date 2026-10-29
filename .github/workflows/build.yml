@@ -49,3 +49,42 @@ jobs:
         with:
           name: PC-Control-Android-APK
           path: android/app/build/outputs/apk/debug/app-debug.apk
+
+  release:
+    name: Publish direct downloads
+    needs: [windows, android]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download tested Android and Windows builds
+        uses: actions/download-artifact@v4
+        with:
+          pattern: PC-Control-*
+          merge-multiple: true
+          path: release-files
+      - name: Prepare named downloads and checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release
+          mv release-files/app-debug.apk release/PC-Control-Android-v1.1.apk
+          mv release-files/PC-Control-Windows.exe release/PC-Control-Windows-v1.1.exe
+          cd release
+          sha256sum PC-Control-Android-v1.1.apk PC-Control-Windows-v1.1.exe > SHA256SUMS.txt
+          ls -lah
+      - name: Publish public GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release create pc-control-v1.1 \
+            release/PC-Control-Android-v1.1.apk \
+            release/PC-Control-Windows-v1.1.exe \
+            release/SHA256SUMS.txt \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "PC Control v1.1 — Android + Windows" \
+            --notes "Комплект для личного управления Windows с Android в одной локальной Wi-Fi сети. Прямые файлы APK и EXE; тестовые сборки без коммерческой подписи. Перед использованием прочитайте README ветки pc-control. Не открывайте порт 43821 в интернет. Wake-on-LAN зависит от оборудования и не гарантирует включение." \
+            --latest=false
