@@ -11,7 +11,7 @@ import java.util.Locale
  */
 internal object SvitloMessage {
     private val onMessage = Regex(
-        """(?im)^\s*🟢\s*\d{1,2}:\d{2}\s+світло\s+з['’]явилося\b"""
+        """(?im)^\s*🟢\s*\d{1,2}:\d{2}\s+світло\s+з['’]явилося(?:\s|$)"""
     )
 
     fun isLightRestored(packageName: String, title: String, body: String): Boolean {
