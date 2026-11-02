@@ -127,6 +127,14 @@ class MainActivity : Activity() {
         val date=Instant.ofEpochMilli(t).atZone(ZoneId.of("Europe/Kyiv"))
         return "Следующий сигнал: " + date.format(DateTimeFormatter.ofPattern("EEE, d MMM · HH:mm", Locale("ru")))
     }
+    private fun notificationAccessGranted(): Boolean {
+        val enabled = Settings.Secure.getString(
+            contentResolver, "enabled_notification_listeners").orEmpty()
+        return enabled.split(":").mapNotNull { ComponentName.unflattenFromString(it) }
+            .any { it.packageName == packageName &&
+                it.className == LightNotificationListener::class.java.name }
+    }
+
     private fun render() {
         val root = column().apply {
             setBackgroundColor(bg)
@@ -208,6 +216,80 @@ class MainActivity : Activity() {
         }
         hero.addView(power)
         topSpacing(root,hero)
+
+        val lightCard=verticalCard().apply {
+            background=bgShape(Color.rgb(23, 49, 53),22,Color.rgb(46, 102, 95))
+        }
+        title(lightCard,"⚡  Разбудить при появлении света",
+            "Отдельный режим — без привязки к часам будильника")
+        spacer(lightCard,14)
+        val lightArmed=p.getBoolean("light_armed",false)
+        val lightPending=p.getBoolean("light_pending",false)
+        val accessGranted=notificationAccessGranted()
+        val lightState=when {
+            lightPending -> "🟢 Свет появился · ждём подтверждённого отбоя"
+            lightArmed && !accessGranted -> "⚠ Режим включён, но нет доступа к уведомлениям"
+            lightArmed -> "● Жду следующее сообщение о включении света"
+            else -> "○ Ожидание выключено"
+        }
+        lightCard.addView(text(lightState,13f,if(lightArmed)mint else muted,true))
+        spacer(lightCard,13)
+        val lightButton=button(
+            if(lightArmed)"Отменить пробуждение по свету" else "Разбудить меня, когда включат свет",
+            if(lightArmed)Color.rgb(65,72,104) else Color.rgb(37,132,116))
+        lightButton.setOnClickListener {
+            if(lightArmed) {
+                p.edit().putBoolean("light_armed",false)
+                    .putBoolean("light_pending",false).apply()
+                AlarmPlan.cancelLightRetry(this)
+            } else {
+                p.edit().putBoolean("light_armed",true)
+                    .putBoolean("light_pending",false)
+                    .putLong("light_armed_at",System.currentTimeMillis()).apply()
+                if(!notificationAccessGranted()){
+                    Toast.makeText(this,
+                        "Разреши ТИХО доступ к уведомлениям для отслеживания СвітлоБот",
+                        Toast.LENGTH_LONG).show()
+                    try { startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)) }
+                    catch (_: Exception) {}
+                } else if(!AlarmPlan.hasPermission(this)) {
+                    try { startActivity(Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM)) }
+                    catch (_: Exception) {}
+                }
+                if(Build.VERSION.SDK_INT>=33 &&
+                    checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED)
+                    requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS),201)
+            }
+            render()
+        }
+        lightCard.addView(lightButton)
+        spacer(lightCard,14)
+        val permissionButton=button(
+            if(accessGranted)"✓  Доступ к уведомлениям включён" else "Разрешить уведомления Telegram",
+            Color.rgb(34,65,73), mint)
+        permissionButton.setOnClickListener {
+            try { startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)) }
+            catch (_: Exception) {
+                Toast.makeText(this,"Открой настройки → Доступ к уведомлениям",Toast.LENGTH_LONG).show()
+            }
+        }
+        lightCard.addView(permissionButton)
+        spacer(lightCard,13)
+        lightCard.addView(text(
+            "Источник: @svitlobot_lom52_3. В Telegram подпишись на канал, включи " +
+            "уведомления и показ текста. Сработает только на НОВОМ сообщении " +
+            "«🟢 Світло з'явилося», а не на расписании. При тревоге ждём отбоя.",
+            12f,muted))
+        if(lightArmed && !AlarmPlan.hasPermission(this)) {
+            spacer(lightCard,11)
+            val exact=button("Разрешить точные будильники",Color.rgb(87,70,51))
+            exact.setOnClickListener {
+                try { startActivity(Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM)) }
+                catch (_: Exception) {}
+            }
+            lightCard.addView(exact)
+        }
+        topSpacing(root,lightCard)
 
         val daysCard=verticalCard()
         title(daysCard,"Дни недели","Нажми на дни, в которые нужно просыпаться")

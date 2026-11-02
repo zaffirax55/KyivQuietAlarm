@@ -67,9 +67,17 @@ class AlarmService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (dead || checking || ringing) return START_NOT_STICKY
+        val lightCheck = intent?.action == AlarmConfig.ACTION_LIGHT_RETRY
+        if (dead || ringing) return START_NOT_STICKY
+        if (checking) {
+            if (lightCheck) AlarmPlan.scheduleLightRetry(this, System.currentTimeMillis() + 60_000L)
+            return START_NOT_STICKY
+        }
         val p = AlarmConfig.prefs(this)
-        if (!p.getBoolean("enabled", false)) {
+        val allowed = if (lightCheck)
+            p.getBoolean("light_armed", false) && p.getBoolean("light_pending", false)
+        else p.getBoolean("enabled", false)
+        if (!allowed) {
             stopSelf()
             return START_NOT_STICKY
         }
@@ -84,7 +92,10 @@ class AlarmService : Service() {
             main.post {
                 if (dead) return@post
                 checking = false
-                if (!p.getBoolean("enabled", false)) {
+                val stillAllowed = if (lightCheck)
+                    p.getBoolean("light_armed", false) && p.getBoolean("light_pending", false)
+                else p.getBoolean("enabled", false)
+                if (!stillAllowed) {
                     stopSelf()
                     return@post
                 }
@@ -96,6 +107,32 @@ class AlarmService : Service() {
                     .putString("last_detail", result.detail.take(140))
                     .putLong("last_checked", System.currentTimeMillis())
                     .apply()
+                if (lightCheck) {
+                    if (state == false) {
+                        p.edit().putBoolean("light_armed", false)
+                            .putBoolean("light_pending", false).apply()
+                        AlarmPlan.cancelLightRetry(this)
+                        ring("⚡ Свет появился, тревоги нет — просыпайся!")
+                    } else {
+                        // Power restoration never overrides the confirmed all-clear gate.
+                        val retry = System.currentTimeMillis() + 60_000L
+                        if (AlarmPlan.scheduleLightRetry(this, retry)) {
+                            stopSelf()
+                        } else {
+                            startForeground(AlarmConfig.NOTIF_ID,
+                                notification("Свет вернулся. Ожидаем подтверждённого отбоя…"))
+                            main.postDelayed({
+                                if (!dead) {
+                                    checking = false
+                                    onStartCommand(
+                                        Intent(this, AlarmService::class.java)
+                                            .setAction(AlarmConfig.ACTION_LIGHT_RETRY), 0, 0)
+                                }
+                            }, 60_000L)
+                        }
+                    }
+                    return@post
+                }
                 if (state == true || (state == null && strict)) {
                     // Do not assume an API error means all-clear.
                     p.edit().putBoolean("pending", true).apply()
